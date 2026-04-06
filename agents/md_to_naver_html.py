@@ -318,10 +318,12 @@ def deploy_to_html_share(html_path: str) -> str:
 
     # git pull + commit
     commit_result = subprocess.run(
-        f'cd "{html_share_dir}" && git pull --rebase && git add "{slug}" && git commit -m "add {slug}"',
+        f'cd "{html_share_dir}" && git pull --rebase && git add "{slug}" && git commit -m "add {slug}" || echo "NOTHING_NEW"',
         shell=True, capture_output=True, text=True
     )
-    if commit_result.returncode != 0:
+    # "NOTHING_NEW"는 이미 동일 내용이 커밋돼 있는 경우 — 정상
+    already_deployed = "NOTHING_NEW" in commit_result.stdout or "nothing to commit" in commit_result.stdout
+    if commit_result.returncode != 0 and not already_deployed:
         print(f"⚠️ git commit 실패: {commit_result.stderr.strip()}")
         return ""
 
