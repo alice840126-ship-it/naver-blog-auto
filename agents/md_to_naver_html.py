@@ -271,6 +271,82 @@ def convert(md_path: str) -> str:
     return str(out_path)
 
 
+def to_english_slug(filename: str) -> str:
+    """한글 파일명 → html-share용 영문 슬러그 변환.
+    예: 2026-04-06-korean-law-mcp-설치-사용법.html → 2026-0406-korean-law-mcp.html
+    """
+    import re
+    import unicodedata
+    stem = Path(filename).stem  # 확장자 제거
+
+    # 날짜 패턴 추출 (YYYY-MM-DD → YYYY-MMDD)
+    date_match = re.match(r'(\d{4})-(\d{2})-(\d{2})-(.*)', stem)
+    if date_match:
+        year, month, day, rest = date_match.groups()
+        date_part = f"{year}-{month}{day}"
+    else:
+        date_part = ""
+        rest = stem
+
+    # 영문+숫자+하이픈만 남기기
+    rest = unicodedata.normalize('NFKD', rest)
+    rest = re.sub(r'[^\x00-\x7F]', '', rest)  # 비ASCII 제거
+    rest = re.sub(r'[^a-zA-Z0-9\-]', '-', rest)
+    rest = re.sub(r'-+', '-', rest).strip('-')
+
+    # 영문 부분만 최대 30자
+    rest = rest[:30].rstrip('-')
+
+    slug = f"{date_part}-{rest}" if date_part else rest
+    return slug + ".html"
+
+
+def deploy_to_html_share(html_path: str) -> str:
+    """html-share 레포에 push 후 단축 URL 반환."""
+    html_share_dir = Path.home() / "html-share"
+    if not html_share_dir.exists():
+        print("⚠️ ~/html-share 폴더 없음 — 외부 배포 스킵")
+        return ""
+
+    html_file = Path(html_path)
+    slug = to_english_slug(html_file.name)
+    dest = html_share_dir / slug
+
+    # 복사
+    import shutil
+    shutil.copy2(html_path, dest)
+
+    # git pull + commit
+    commit_result = subprocess.run(
+        f'cd "{html_share_dir}" && git pull --rebase && git add "{slug}" && git commit -m "add {slug}"',
+        shell=True, capture_output=True, text=True
+    )
+    if commit_result.returncode != 0:
+        print(f"⚠️ git commit 실패: {commit_result.stderr.strip()}")
+        return ""
+
+    # git push (최대 2회 시도)
+    for attempt in range(2):
+        push_result = subprocess.run(
+            f'cd "{html_share_dir}" && git push',
+            shell=True, capture_output=True, text=True
+        )
+        if push_result.returncode == 0:
+            break
+        if attempt == 1:
+            print(f"⚠️ git push 실패: {push_result.stderr.strip()}")
+            return ""
+
+    # is.gd 단축 URL
+    page_url = f"https://alice840126-ship-it.github.io/html-share/{slug}"
+    short_result = subprocess.run(
+        ["curl", "-s", f"https://is.gd/create.php?format=simple&url={page_url}"],
+        capture_output=True, text=True
+    )
+    short_url = short_result.stdout.strip()
+    return short_url if short_url.startswith("http") else page_url
+
+
 def main():
     if len(sys.argv) < 2:
         print("사용법: python3 md_to_naver_html.py [MD파일경로]")
@@ -280,6 +356,13 @@ def main():
 
     # 브라우저 자동 오픈
     subprocess.run(["open", out_path])
+
+    # html-share 배포
+    print()
+    print("🚀 외부 공유 레포 배포 중...")
+    short_url = deploy_to_html_share(out_path)
+    if short_url:
+        print(f"🌐 외부 공유 URL: {short_url}")
     print()
     print("📋 브라우저에서 Cmd+A → Cmd+C → 네이버 블로그 에디터에 붙여넣기!")
 
